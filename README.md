@@ -43,6 +43,12 @@ python main.py
 4. 到达设定时间后，当天只会触发一次；如果程序在设定时间之后启动，会在启动后补执行当天这一次。
 5. 执行结果会写入主界面日志和账号上次状态。
 
+## GitHub Actions 定时打卡
+
+仓库内置无界面入口 `python -m app.cli.checkin_once` 和每日定时 workflow：`.github/workflows/daily-checkin.yml`。
+
+详细配置步骤见 [GitHub Actions 每日定时打卡教程](docs/github-actions.md)。
+
 ## 打包
 
 ```powershell

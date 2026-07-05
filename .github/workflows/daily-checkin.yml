@@ -1,0 +1,55 @@
+name: Daily 652 Check-in
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only validate secrets and print planned accounts"
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "31 7 * * *"
+      timezone: "Asia/Shanghai"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-652-checkin
+  cancel-in-progress: false
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-action.txt
+
+      - name: Run check-in
+        env:
+          QFHY_SESSION: ${{ secrets.QFHY_SESSION }}
+          CHECKIN_ACCOUNTS_JSON: ${{ secrets.CHECKIN_ACCOUNTS_JSON }}
+          CHECKIN_CAMPUS: ${{ vars.CHECKIN_CAMPUS || '宜宾' }}
+          CHECKIN_LOCATION_MODE: ${{ vars.CHECKIN_LOCATION_MODE || 'default' }}
+          CHECKIN_LOCATION_INDEX: ${{ vars.CHECKIN_LOCATION_INDEX || '0' }}
+          CHECKIN_RANDOM_OFFSET: ${{ vars.CHECKIN_RANDOM_OFFSET || 'false' }}
+          CHECKIN_MAX_OFFSET_METERS: ${{ vars.CHECKIN_MAX_OFFSET_METERS || '35' }}
+          CHECKIN_TIMEOUT: ${{ vars.CHECKIN_TIMEOUT || '20' }}
+        shell: bash
+        run: |
+          EXTRA_ARGS=()
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            EXTRA_ARGS+=(--dry-run)
+          fi
+          python -m app.cli.checkin_once "${EXTRA_ARGS[@]}"

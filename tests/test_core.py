@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 from app.core.checkin_service import CheckinService
 from app.core.location import build_checkin_body, default_location
 from app.core.rsa_encryptor import encrypt_password
+from app.cli.checkin_once import CliConfigError, account_from_spec, load_account_specs, location_from_spec, parse_args
 from app.utils.cookie_utils import extract_cookie_value, merge_cookie_strings
 from app.utils.logger import redact_message
 
@@ -61,6 +62,41 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(extract_cookie_value(merged, "SESSION"), "abc")
         redacted = redact_message(f"Cookie: {merged}")
         self.assertNotIn("secret.jwt.value", redacted)
+
+    def test_cli_single_account_env(self) -> None:
+        specs = load_account_specs(
+            {
+                "QFHY_SESSION": "SESSION=test-value",
+                "CHECKIN_STUDENT_ID": "1001",
+            }
+        )
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0]["session"], "SESSION=test-value")
+        account = account_from_spec(specs[0])
+        args = parse_args(["--location-mode", "fixed", "--location-index", "1"])
+        location = location_from_spec(specs[0], args, account.selected_location)
+        self.assertEqual(location.campus, "宜宾")
+
+    def test_cli_accounts_json(self) -> None:
+        raw = json.dumps(
+            [
+                {
+                    "student_id": "1001",
+                    "campus": "汇东",
+                    "cookies": "SESSION=test-value",
+                    "location_mode": "fixed",
+                    "location_index": 1,
+                }
+            ],
+            ensure_ascii=False,
+        )
+        specs = load_account_specs({"CHECKIN_ACCOUNTS_JSON": raw})
+        self.assertEqual(specs[0]["session"], "SESSION=test-value")
+        self.assertEqual(specs[0]["campus"], "汇东")
+
+    def test_cli_requires_session(self) -> None:
+        with self.assertRaises(CliConfigError):
+            load_account_specs({})
 
 
 if __name__ == "__main__":
