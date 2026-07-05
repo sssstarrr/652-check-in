@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ from app.core.checkin_service import CheckinService
 from app.core.location import build_checkin_body, default_location
 from app.core.rsa_encryptor import encrypt_password
 from app.cli.checkin_once import CliConfigError, account_from_spec, load_account_specs, location_from_spec, parse_args
+from app.utils import time_utils
 from app.utils.cookie_utils import extract_cookie_value, merge_cookie_strings
 from app.utils.logger import redact_message
 
@@ -97,6 +99,17 @@ class CoreTests(unittest.TestCase):
     def test_cli_requires_session(self) -> None:
         with self.assertRaises(CliConfigError):
             load_account_specs({})
+
+    def test_time_utils_respects_configured_timezone(self) -> None:
+        old_value = os.environ.get("CHECKIN_TIMEZONE")
+        try:
+            os.environ["CHECKIN_TIMEZONE"] = "Asia/Shanghai"
+            self.assertRegex(time_utils.now_string(), r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+        finally:
+            if old_value is None:
+                os.environ.pop("CHECKIN_TIMEZONE", None)
+            else:
+                os.environ["CHECKIN_TIMEZONE"] = old_value
 
 
 if __name__ == "__main__":
