@@ -14,7 +14,7 @@ DEFAULT_SETTINGS = {
     "debug": False,
     "timeout": 15,
     "auto_checkin_enabled": False,
-    "auto_checkin_time": "07:30",
+    "auto_checkin_time": "19:31",
     "auto_checkin_scope": "全部账号",
     "last_auto_checkin_date": "",
 }

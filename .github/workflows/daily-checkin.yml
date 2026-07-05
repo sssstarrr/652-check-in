@@ -9,7 +9,7 @@ on:
         default: false
         type: boolean
   schedule:
-    - cron: "31 7 * * *"
+    - cron: "31 19 * * *"
       timezone: "Asia/Shanghai"
 
 permissions:

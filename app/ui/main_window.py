@@ -372,7 +372,7 @@ class MainWindow(QMainWindow):
         from datetime import datetime
 
         now = datetime.now()
-        target = str(self.settings.get("auto_checkin_time") or "07:30")
+        target = str(self.settings.get("auto_checkin_time") or "19:31")
         target_minutes = self._time_to_minutes(target)
         if target_minutes is None:
             return
@@ -416,7 +416,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "auto_schedule_label"):
             return
         if self.settings.get("auto_checkin_enabled"):
-            time_text = self.settings.get("auto_checkin_time") or "07:30"
+            time_text = self.settings.get("auto_checkin_time") or "19:31"
             scope = self.settings.get("auto_checkin_scope") or "全部账号"
             self.auto_schedule_label.setText(f"自动打卡 {time_text} / {scope}")
         else:
