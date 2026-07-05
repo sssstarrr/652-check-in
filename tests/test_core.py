@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+import base64
+import json
+import sys
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from app.core.checkin_service import CheckinService
+from app.core.location import build_checkin_body, default_location
+from app.core.rsa_encryptor import encrypt_password
+from app.utils.cookie_utils import extract_cookie_value, merge_cookie_strings
+from app.utils.logger import redact_message
+
+
+def _jwt(payload: dict) -> str:
+    header = {"alg": "none", "typ": "JWT"}
+
+    def enc(value: dict) -> str:
+        raw = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    return f"{enc(header)}.{enc(payload)}.sig"
+
+
+class CoreTests(unittest.TestCase):
+    def test_encrypt_password_matches_expected_shape(self) -> None:
+        first = encrypt_password("abc123")
+        second = encrypt_password("abc124")
+        self.assertEqual(len(first), 256)
+        self.assertNotEqual(first, second)
+        int(first, 16)
+
+    def test_parse_sop_session(self) -> None:
+        token = _jwt(
+            {
+                "uid": "23341010304",
+                "ticket": "ticket-value",
+                "extra": json.dumps({"userName": "测试用户", "openId": "openid-value"}, ensure_ascii=False),
+            }
+        )
+        service = CheckinService()
+        self.assertEqual(service.extract_ticket_from_sop_session(token), "ticket-value")
+        self.assertEqual(service.extract_openid_from_sop_session(token), "openid-value")
+        self.assertEqual(service.extract_user_info_from_sop_session(token), ("23341010304", "测试用户"))
+
+    def test_location_body_shape(self) -> None:
+        location = default_location("宜宾")
+        body = build_checkin_body(1001, location)
+        self.assertEqual(body["id"], 1001)
+        self.assertEqual(body["qdzt"], 1)
+        self.assertIn("point", body["location"])
+        self.assertIn("qdddjtdz", body)
+
+    def test_cookie_helpers_and_redaction(self) -> None:
+        merged = merge_cookie_strings("SESSION=abc", "_sop_session_=secret.jwt.value")
+        self.assertEqual(extract_cookie_value(merged, "SESSION"), "abc")
+        redacted = redact_message(f"Cookie: {merged}")
+        self.assertNotIn("secret.jwt.value", redacted)
+
+
+if __name__ == "__main__":
+    unittest.main()

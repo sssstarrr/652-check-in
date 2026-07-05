@@ -1,0 +1,7 @@
+PyQt5
+requests
+pycryptodome
+beautifulsoup4
+qrcode
+pillow
+keyring
