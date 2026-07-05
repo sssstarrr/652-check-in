@@ -54,7 +54,10 @@ class AppLogger:
         self.logger = logging.getLogger("checkin_desktop")
         self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
         if not self.logger.handlers:
-            handler = logging.FileHandler(app_data_dir() / "app.log", encoding="utf-8")
+            try:
+                handler = logging.FileHandler(app_data_dir() / "app.log", encoding="utf-8")
+            except OSError:
+                handler = logging.StreamHandler()
             handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
             self.logger.addHandler(handler)
 
