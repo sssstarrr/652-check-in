@@ -2,10 +2,16 @@
 
 独立的 Python + PyQt5 桌面工具，只实现 SUSE OAA 中的 652 打卡能力：密码登录、短信二次验证、微信扫码登录、任务刷新、位置签到、账号与 Session 管理。
 
+## 获取源码
+
+```powershell
+gh repo clone sssstarrr/652-check-in
+cd 652-check-in
+```
+
 ## 运行
 
 ```powershell
-cd checkin_desktop
 python -m pip install -r requirements.txt
 python main.py
 ```
@@ -52,12 +58,12 @@ python main.py
 ## 打包
 
 ```powershell
-cd checkin_desktop
+cd 652-check-in
 python -m pip install pyinstaller
 scripts\build_windows.bat
 ```
 
-输出目录位于 `checkin_desktop/dist/652-Checkin-Desktop`。
+输出目录位于 `dist/652-Checkin-Desktop`。
 
 ## 常见问题
 
@@ -69,7 +75,7 @@ scripts\build_windows.bat
 ## 开发验证
 
 ```powershell
-cd checkin_desktop
+cd 652-check-in
 python -m unittest discover -s tests
 python -m compileall app
 ```
