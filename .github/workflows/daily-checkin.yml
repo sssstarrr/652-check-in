@@ -9,8 +9,8 @@ on:
         default: false
         type: boolean
   schedule:
-    - cron: "31 19 * * *"
-      timezone: "Asia/Shanghai"
+    # GitHub cron uses UTC. 11:31 UTC = 19:31 Asia/Shanghai.
+    - cron: "31 11 * * *"
 
 permissions:
   contents: read
@@ -46,6 +46,8 @@ jobs:
           CHECKIN_RANDOM_OFFSET: ${{ vars.CHECKIN_RANDOM_OFFSET || 'false' }}
           CHECKIN_MAX_OFFSET_METERS: ${{ vars.CHECKIN_MAX_OFFSET_METERS || '35' }}
           CHECKIN_TIMEOUT: ${{ vars.CHECKIN_TIMEOUT || '20' }}
+          CHECKIN_TIMEZONE: Asia/Shanghai
+          TZ: Asia/Shanghai
         shell: bash
         run: |
           EXTRA_ARGS=()
