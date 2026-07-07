@@ -52,9 +52,11 @@ python main.py
 ## GitHub Actions 定时打卡
 
 仓库内置无界面入口 `python -m app.cli.checkin_once` 和每日定时 workflow：`.github/workflows/daily-checkin.yml`。
-默认按北京时间 `19:30-23:55` 每 5 分钟尝试一次，workflow 内部会设置 `CHECKIN_TIMEZONE=Asia/Shanghai`。当天任意一次运行成功后，后续定时任务会先检测成功记录并直接跳过，不再重复访问学校接口。
+默认从北京时间 `16:01` 开始每 5 分钟唤醒一次，但只有 `19:31-23:55` 窗口内才真正打卡，workflow 内部会设置 `CHECKIN_TIMEZONE=Asia/Shanghai`。当天任意一次运行成功后，后续定时任务会先检测成功记录并直接跳过，不再重复访问学校接口。
 
 详细配置步骤见 [GitHub Actions 每日定时打卡教程](docs/github-actions.md)。
+
+如果有自己的 Linux 服务器，优先推荐 [Linux 服务器定时打卡教程](docs/server-cron.md)，比 GitHub Actions 的 schedule 更准。
 
 ## 打包
 

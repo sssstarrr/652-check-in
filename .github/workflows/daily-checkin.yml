@@ -1,5 +1,4 @@
 name: Daily 652 Check-in
-run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true && 'Dry-run 652 Check-in' || 'Daily 652 Check-in' }}
 
 on:
   workflow_dispatch:
@@ -10,10 +9,9 @@ on:
         default: false
         type: boolean
   schedule:
-    # GitHub cron uses UTC. Try every 5 minutes from 19:30 to 23:55 Asia/Shanghai.
-    # GitHub scheduled runs can be delayed; repeated runs are safe because the app detects already checked-in tasks.
-    - cron: "30,35,40,45,50,55 11 * * *"
-    - cron: "*/5 12-15 * * *"
+    # GitHub cron uses UTC and can be delayed. Wake up early and often, then gate by Beijing time below.
+    # 08:01-15:56 UTC = 16:01-23:56 Asia/Shanghai.
+    - cron: "1,6,11,16,21,26,31,36,41,46,51,56 8-15 * * *"
 
 permissions:
   contents: read
@@ -32,10 +30,26 @@ jobs:
       - name: Compute Beijing date
         id: clock
         shell: bash
-        run: echo "date=$(TZ=Asia/Shanghai date +%F)" >> "$GITHUB_OUTPUT"
+        run: |
+          beijing_date="$(TZ=Asia/Shanghai date +%F)"
+          beijing_time="$(TZ=Asia/Shanghai date +%H:%M)"
+          should_run=false
+          if [[ "${{ github.event_name }}" != "schedule" ]] || { [[ "$beijing_time" > "19:30" ]] && [[ "$beijing_time" < "23:56" ]]; }; then
+            should_run=true
+          fi
+          echo "date=$beijing_date" >> "$GITHUB_OUTPUT"
+          echo "time=$beijing_time" >> "$GITHUB_OUTPUT"
+          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+          echo "Beijing time: $beijing_date $beijing_time, should_run=$should_run"
+
+      - name: Skip outside check-in window
+        if: github.event_name == 'schedule' && steps.clock.outputs.should_run != 'true'
+        shell: bash
+        run: echo "北京时间 ${{ steps.clock.outputs.date }} ${{ steps.clock.outputs.time }} 不在 19:31-23:55 打卡窗口内，本次唤醒跳过。"
 
       - name: Restore success marker
         id: success-marker
+        if: steps.clock.outputs.should_run == 'true'
         uses: actions/cache/restore@v4
         with:
           path: .checkin-success
@@ -43,7 +57,7 @@ jobs:
 
       - name: Check previous successful run
         id: previous-success
-        if: github.event_name == 'schedule' && steps.success-marker.outputs.cache-hit != 'true'
+        if: steps.clock.outputs.should_run == 'true' && github.event_name == 'schedule' && steps.success-marker.outputs.cache-hit != 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           WORKFLOW_FILE: daily-checkin.yml
@@ -98,27 +112,27 @@ jobs:
           PY
 
       - name: Skip because already succeeded today
-        if: github.event_name == 'schedule' && (steps.success-marker.outputs.cache-hit == 'true' || steps.previous-success.outputs.found == 'true')
+        if: steps.clock.outputs.should_run == 'true' && github.event_name == 'schedule' && (steps.success-marker.outputs.cache-hit == 'true' || steps.previous-success.outputs.found == 'true')
         shell: bash
         run: echo "北京时间 ${{ steps.clock.outputs.date }} 已有成功打卡，本次定时任务跳过。"
 
       - name: Checkout
-        if: github.event_name != 'schedule' || (steps.success-marker.outputs.cache-hit != 'true' && steps.previous-success.outputs.found != 'true')
+        if: steps.clock.outputs.should_run == 'true' && (github.event_name != 'schedule' || (steps.success-marker.outputs.cache-hit != 'true' && steps.previous-success.outputs.found != 'true'))
         uses: actions/checkout@v4
 
       - name: Set up Python
-        if: github.event_name != 'schedule' || (steps.success-marker.outputs.cache-hit != 'true' && steps.previous-success.outputs.found != 'true')
+        if: steps.clock.outputs.should_run == 'true' && (github.event_name != 'schedule' || (steps.success-marker.outputs.cache-hit != 'true' && steps.previous-success.outputs.found != 'true'))
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
       - name: Install dependencies
-        if: github.event_name != 'schedule' || (steps.success-marker.outputs.cache-hit != 'true' && steps.previous-success.outputs.found != 'true')
+        if: steps.clock.outputs.should_run == 'true' && (github.event_name != 'schedule' || (steps.success-marker.outputs.cache-hit != 'true' && steps.previous-success.outputs.found != 'true'))
         run: python -m pip install -r requirements-action.txt
 
       - name: Run check-in
         id: run-checkin
-        if: github.event_name != 'schedule' || (steps.success-marker.outputs.cache-hit != 'true' && steps.previous-success.outputs.found != 'true')
+        if: steps.clock.outputs.should_run == 'true' && (github.event_name != 'schedule' || (steps.success-marker.outputs.cache-hit != 'true' && steps.previous-success.outputs.found != 'true'))
         env:
           QFHY_SESSION: ${{ secrets.QFHY_SESSION }}
           CHECKIN_ACCOUNTS_JSON: ${{ secrets.CHECKIN_ACCOUNTS_JSON }}
@@ -139,7 +153,7 @@ jobs:
           python -m app.cli.checkin_once "${EXTRA_ARGS[@]}"
 
       - name: Write success marker
-        if: steps.success-marker.outputs.cache-hit != 'true' && (steps.previous-success.outputs.found == 'true' || steps.run-checkin.outcome == 'success') && (github.event_name != 'workflow_dispatch' || inputs.dry_run != true)
+        if: steps.clock.outputs.should_run == 'true' && steps.success-marker.outputs.cache-hit != 'true' && (steps.previous-success.outputs.found == 'true' || steps.run-checkin.outcome == 'success') && (github.event_name != 'workflow_dispatch' || inputs.dry_run != true)
         shell: bash
         run: |
           mkdir -p .checkin-success
@@ -150,7 +164,7 @@ jobs:
           } > ".checkin-success/${{ steps.clock.outputs.date }}.txt"
 
       - name: Save success marker
-        if: steps.success-marker.outputs.cache-hit != 'true' && (steps.previous-success.outputs.found == 'true' || steps.run-checkin.outcome == 'success') && (github.event_name != 'workflow_dispatch' || inputs.dry_run != true)
+        if: steps.clock.outputs.should_run == 'true' && steps.success-marker.outputs.cache-hit != 'true' && (steps.previous-success.outputs.found == 'true' || steps.run-checkin.outcome == 'success') && (github.event_name != 'workflow_dispatch' || inputs.dry_run != true)
         uses: actions/cache/save@v4
         continue-on-error: true
         with:
