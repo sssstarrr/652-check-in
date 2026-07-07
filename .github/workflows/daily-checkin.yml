@@ -9,8 +9,9 @@ on:
         default: false
         type: boolean
   schedule:
-    # GitHub cron uses UTC. 11:31 UTC = 19:31 Asia/Shanghai.
-    - cron: "31 11 * * *"
+    # GitHub cron uses UTC. These retries cover 19:31-20:31 Asia/Shanghai.
+    - cron: "31,41,51 11 * * *"
+    - cron: "1,11,21,31 12 * * *"
 
 permissions:
   contents: read

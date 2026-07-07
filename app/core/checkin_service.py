@@ -222,19 +222,17 @@ class CheckinService:
         account: Account,
         selected_location: CheckinLocation | None = None,
     ) -> CheckinResult:
-        effective_cookies = cookies
-        if "_sop_session_=" in effective_cookies and "SESSION=" not in effective_cookies:
-            try:
-                effective_cookies = self.api.complete_sso_with_sop_session(effective_cookies)
-            except Exception as exc:
-                self.logger.error(f"SSO SESSION 获取失败: {exc}")
+        effective_cookies = self._refresh_session_from_sop(cookies)
 
         task_response = self.api.get_task_list(status=1, cookies=effective_cookies)
         if task_response.status_code != 200:
             return self._checkin_failed(account, f"获取任务列表失败 ({task_response.status_code})")
         task_payload = task_response.json()
         if task_payload.get("resultCode") != 0 or not task_payload.get("success"):
-            return self._checkin_failed(account, task_payload.get("errorMsg") or "获取任务列表失败")
+            return self._checkin_failed(
+                account,
+                self._api_error_message("获取任务列表失败", task_payload.get("errorMsg"), effective_cookies),
+            )
 
         tasks = [CheckinTask.from_api(item) for item in ((task_payload.get("result") or {}).get("data") or [])]
         if not tasks:
@@ -247,7 +245,10 @@ class CheckinService:
             return self._checkin_failed(account, f"获取任务详情失败 ({detail_response.status_code})")
         detail_payload = detail_response.json()
         if detail_payload.get("resultCode") != 0 or not detail_payload.get("success"):
-            return self._checkin_failed(account, detail_payload.get("errorMsg") or "获取任务详情失败")
+            return self._checkin_failed(
+                account,
+                self._api_error_message("获取任务详情失败", detail_payload.get("errorMsg"), effective_cookies),
+            )
 
         dkxx = (((detail_payload.get("result") or {}).get("data") or {}).get("dkxx") or {})
         if int(dkxx.get("qdzt") or 0) == 1:
@@ -261,7 +262,28 @@ class CheckinService:
         submit_payload = submit_response.json()
         if submit_payload.get("success") and submit_payload.get("resultCode") == 0:
             return self._checkin_success(account, "签到成功", task, location, effective_cookies)
-        return self._checkin_failed(account, submit_payload.get("errorMsg") or "签到失败")
+        return self._checkin_failed(
+            account,
+            self._api_error_message("签到失败", submit_payload.get("errorMsg"), effective_cookies),
+        )
+
+    def _refresh_session_from_sop(self, cookies: str) -> str:
+        if "_sop_session_=" not in cookies:
+            return cookies
+        try:
+            refreshed = self.api.complete_sso_with_sop_session(cookies)
+            return refreshed or cookies
+        except Exception as exc:
+            self.logger.error(f"SSO SESSION 获取失败: {exc}")
+            return cookies
+
+    def _api_error_message(self, fallback: str, message: Any, cookies: str) -> str:
+        text = str(message or fallback)
+        if "身份信息" not in text:
+            return text
+        if "_sop_session_=" in cookies:
+            return f"{text}；GitHub Secret 中的登录态已失效，请重新登录桌面版后复制最新完整 session_token"
+        return f"{text}；GitHub Secret 只包含 SESSION 或已过期，请复制 accounts.json 中完整 session_token"
 
     def parse_sop_session(self, jwt: str) -> dict[str, Any]:
         parts = jwt.split(".")

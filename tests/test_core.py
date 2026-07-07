@@ -13,8 +13,16 @@ sys.path.insert(0, str(ROOT))
 
 from app.core.checkin_service import CheckinService
 from app.core.location import build_checkin_body, default_location
+from app.core.models import Account, CheckinStatus
 from app.core.rsa_encryptor import encrypt_password
-from app.cli.checkin_once import CliConfigError, account_from_spec, load_account_specs, location_from_spec, parse_args
+from app.cli.checkin_once import (
+    CliConfigError,
+    account_from_spec,
+    cookie_diagnostics,
+    load_account_specs,
+    location_from_spec,
+    parse_args,
+)
 from app.utils import time_utils
 from app.utils.cookie_utils import extract_cookie_value, merge_cookie_strings
 from app.utils.logger import redact_message
@@ -64,6 +72,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(extract_cookie_value(merged, "SESSION"), "abc")
         redacted = redact_message(f"Cookie: {merged}")
         self.assertNotIn("secret.jwt.value", redacted)
+        self.assertIn("_sop_session_=是", cookie_diagnostics(merged))
 
     def test_cli_single_account_env(self) -> None:
         specs = load_account_specs(
@@ -110,6 +119,35 @@ class CoreTests(unittest.TestCase):
                 os.environ.pop("CHECKIN_TIMEZONE", None)
             else:
                 os.environ["CHECKIN_TIMEZONE"] = old_value
+
+    def test_refreshes_sop_session_even_when_session_exists(self) -> None:
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {"success": True, "resultCode": 0, "result": {"data": []}}
+
+        class FakeApi:
+            def __init__(self):
+                self.timeout = 15
+                self.refreshed = False
+                self.cookies_seen = ""
+
+            def complete_sso_with_sop_session(self, cookies: str) -> str:
+                self.refreshed = True
+                return merge_cookie_strings(cookies, "SESSION=fresh")
+
+            def get_task_list(self, status: int = 1, cookies: str | None = None):
+                self.cookies_seen = cookies or ""
+                return Response()
+
+        api = FakeApi()
+        service = CheckinService(api=api)
+        account = Account(id="1", student_id="1001", session_token="_sop_session_=sop; SESSION=old")
+        result = service.perform_checkin_with_cookies(account.session_token, account, default_location("宜宾"))
+        self.assertEqual(result.status, CheckinStatus.NO_TASK)
+        self.assertTrue(api.refreshed)
+        self.assertEqual(extract_cookie_value(api.cookies_seen, "SESSION"), "fresh")
 
 
 if __name__ == "__main__":

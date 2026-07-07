@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 from app.core.checkin_service import CheckinService
 from app.core.location import default_location, fixed_location, location_summary, random_location_for_campus
 from app.core.models import Account, CheckinLocation, LoginType
+from app.utils.cookie_utils import parse_cookie_pairs
 from app.utils.time_utils import future_time_string
 
 
@@ -55,6 +56,7 @@ def run(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
     for account, spec in zip(accounts, specs):
         location = location_from_spec(spec, args, account.selected_location)
         print(f"- {account.display_name} / {account.selected_location} / {location_summary(location)}")
+        print(f"  Cookie 检查：{cookie_diagnostics(account.session_token)}")
 
     if args.dry_run:
         print("dry-run 已启用：未访问学校接口，未提交打卡。")
@@ -129,6 +131,13 @@ def account_from_spec(spec: Mapping[str, Any], index: int = 0) -> Account:
         session_token=session,
         session_expire_time=future_time_string(1),
     )
+
+
+def cookie_diagnostics(cookie_string: str) -> str:
+    pairs = parse_cookie_pairs(cookie_string)
+    has_session = "是" if pairs.get("SESSION") else "否"
+    has_sop = "是" if pairs.get("_sop_session_") else "否"
+    return f"SESSION={has_session}, _sop_session_={has_sop}, cookie_count={len(pairs)}"
 
 
 def location_from_spec(spec: Mapping[str, Any], args: argparse.Namespace, campus: str) -> CheckinLocation:
