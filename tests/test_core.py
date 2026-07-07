@@ -17,8 +17,12 @@ from app.core.models import Account, CheckinStatus
 from app.core.rsa_encryptor import encrypt_password
 from app.cli.checkin_once import (
     CliConfigError,
+    EXIT_FAILED,
+    EXIT_NO_TASK,
+    EXIT_OK,
     account_from_spec,
     cookie_diagnostics,
+    finish_exit_code,
     load_account_specs,
     location_from_spec,
     parse_args,
@@ -104,6 +108,40 @@ class CoreTests(unittest.TestCase):
         specs = load_account_specs({"CHECKIN_ACCOUNTS_JSON": raw})
         self.assertEqual(specs[0]["session"], "SESSION=test-value")
         self.assertEqual(specs[0]["campus"], "汇东")
+
+    def test_cli_desktop_accounts_json_shape(self) -> None:
+        raw = json.dumps(
+            {
+                "accounts": [
+                    {
+                        "student_id": "1001",
+                        "selected_location": "宜宾",
+                        "session_token": "SESSION=test-value",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+        specs = load_account_specs({"CHECKIN_ACCOUNTS_JSON": raw})
+        self.assertEqual(specs[0]["session"], "SESSION=test-value")
+        self.assertEqual(specs[0]["campus"], "宜宾")
+
+    def test_cli_accounts_file(self) -> None:
+        path = ROOT / "tests" / "tmp-accounts.json"
+        try:
+            path.write_text(
+                json.dumps({"accounts": [{"student_id": "1001", "session_token": "SESSION=file-value"}]}),
+                encoding="utf-8",
+            )
+            specs = load_account_specs({"CHECKIN_ACCOUNTS_FILE": str(path)})
+            self.assertEqual(specs[0]["session"], "SESSION=file-value")
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_scheduler_exit_code_for_no_task_retry(self) -> None:
+        self.assertEqual(finish_exit_code(True, [], ["1001"]), EXIT_NO_TASK)
+        self.assertEqual(finish_exit_code(False, [], ["1001"]), EXIT_OK)
+        self.assertEqual(finish_exit_code(True, ["1001"], []), EXIT_FAILED)
 
     def test_cli_requires_session(self) -> None:
         with self.assertRaises(CliConfigError):

@@ -4,11 +4,12 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from app.core.checkin_service import CheckinService
 from app.core.location import default_location, fixed_location, location_summary, random_location_for_campus
-from app.core.models import Account, CheckinLocation, LoginType
+from app.core.models import Account, CheckinLocation, CheckinStatus, LoginType
 from app.utils.cookie_utils import parse_cookie_pairs
 from app.utils.time_utils import future_time_string
 
@@ -17,13 +18,19 @@ class CliConfigError(ValueError):
     pass
 
 
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_CONFIG_ERROR = 2
+EXIT_NO_TASK = 3
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         return run(args, os.environ)
     except CliConfigError as exc:
         print(f"配置错误：{exc}", file=sys.stderr)
-        return 2
+        return EXIT_CONFIG_ERROR
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -37,6 +44,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Location selection mode.",
     )
     parser.add_argument("--location-index", type=int, default=_env_int("CHECKIN_LOCATION_INDEX", 0), help="Fixed location index.")
+    parser.add_argument(
+        "--retry-on-no-task",
+        action="store_true",
+        default=_truthy(os.getenv("CHECKIN_RETRY_ON_NO_TASK")),
+        help="Return exit code 3 when no pending check-in task exists, so schedulers can retry later.",
+    )
     parser.add_argument(
         "--random-offset",
         action="store_true",
@@ -65,6 +78,7 @@ def run(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
     service = CheckinService()
     service.api.timeout = max(5, int(args.timeout or 20))
     failed: list[str] = []
+    no_task: list[str] = []
     for account, spec in zip(accounts, specs):
         location = location_from_spec(spec, args, account.selected_location)
         result = service.perform_checkin_with_cookies(account.session_token, account, location)
@@ -75,30 +89,48 @@ def run(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
             print(f"  位置：{location_summary(result.location)}")
         if not result.success:
             failed.append(account.display_name)
+        elif result.status == CheckinStatus.NO_TASK:
+            no_task.append(account.display_name)
 
     if failed:
         print(f"打卡失败账号：{', '.join(failed)}", file=sys.stderr)
-        return 1
+        return finish_exit_code(args.retry_on_no_task, failed, no_task)
+    if args.retry_on_no_task and no_task:
+        print(f"暂未发现待签到任务，等待下一轮重试：{', '.join(no_task)}")
+        return finish_exit_code(args.retry_on_no_task, failed, no_task)
     print("全部账号处理完成。")
-    return 0
+    return finish_exit_code(args.retry_on_no_task, failed, no_task)
+
+
+def finish_exit_code(retry_on_no_task: bool, failed: Sequence[str], no_task: Sequence[str]) -> int:
+    if failed:
+        return EXIT_FAILED
+    if retry_on_no_task and no_task:
+        return EXIT_NO_TASK
+    return EXIT_OK
 
 
 def load_account_specs(environ: Mapping[str, str], default_campus: str = "宜宾") -> list[dict[str, Any]]:
     raw_accounts = (environ.get("CHECKIN_ACCOUNTS_JSON") or "").strip()
+    accounts_file = (environ.get("CHECKIN_ACCOUNTS_FILE") or "").strip()
+    if not raw_accounts and accounts_file:
+        path = Path(accounts_file).expanduser()
+        if not path.exists():
+            raise CliConfigError(f"CHECKIN_ACCOUNTS_FILE 不存在：{path}")
+        raw_accounts = path.read_text(encoding="utf-8").strip()
+
     if raw_accounts:
         try:
             parsed = json.loads(raw_accounts)
         except json.JSONDecodeError as exc:
-            raise CliConfigError(f"CHECKIN_ACCOUNTS_JSON 不是合法 JSON：{exc}") from exc
-        if isinstance(parsed, dict):
-            parsed = [parsed]
-        if not isinstance(parsed, list) or not parsed:
-            raise CliConfigError("CHECKIN_ACCOUNTS_JSON 必须是非空 JSON 数组或对象")
-        return [_normalize_spec(item, default_campus) for item in parsed]
+            source = "CHECKIN_ACCOUNTS_FILE" if accounts_file else "CHECKIN_ACCOUNTS_JSON"
+            raise CliConfigError(f"{source} 不是合法 JSON：{exc}") from exc
+        items = _account_items_from_json(parsed)
+        return [_normalize_spec(item, default_campus) for item in items]
 
     session = (environ.get("QFHY_SESSION") or environ.get("CHECKIN_SESSION") or "").strip()
     if not session:
-        raise CliConfigError("请设置 QFHY_SESSION，或设置 CHECKIN_ACCOUNTS_JSON")
+        raise CliConfigError("请设置 QFHY_SESSION、CHECKIN_ACCOUNTS_JSON 或 CHECKIN_ACCOUNTS_FILE")
     return [
         _normalize_spec(
             {
@@ -113,6 +145,18 @@ def load_account_specs(environ: Mapping[str, str], default_campus: str = "宜宾
             default_campus,
         )
     ]
+
+
+def _account_items_from_json(parsed: Any) -> list[dict[str, Any]]:
+    if isinstance(parsed, dict) and isinstance(parsed.get("accounts"), list):
+        parsed = parsed["accounts"]
+    elif isinstance(parsed, dict):
+        parsed = [parsed]
+    if not isinstance(parsed, list) or not parsed:
+        raise CliConfigError("账号配置必须是非空 JSON 数组、对象，或包含 accounts 数组的桌面版 accounts.json")
+    if not all(isinstance(item, dict) for item in parsed):
+        raise CliConfigError("账号配置项必须是 JSON 对象")
+    return list(parsed)
 
 
 def account_from_spec(spec: Mapping[str, Any], index: int = 0) -> Account:

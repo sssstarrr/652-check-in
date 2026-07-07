@@ -49,14 +49,13 @@ python main.py
 4. 到达设定时间后，当天只会触发一次；如果程序在设定时间之后启动，会在启动后补执行当天这一次。
 5. 执行结果会写入主界面日志和账号上次状态。
 
-## GitHub Actions 定时打卡
+## 服务器自动打卡
 
-仓库内置无界面入口 `python -m app.cli.checkin_once` 和每日定时 workflow：`.github/workflows/daily-checkin.yml`。
-默认从北京时间 `16:01` 开始每 5 分钟唤醒一次，但只有 `19:31-23:55` 窗口内才真正打卡，workflow 内部会设置 `CHECKIN_TIMEZONE=Asia/Shanghai`。当天任意一次运行成功后，后续定时任务会先检测成功记录并直接跳过，不再重复访问学校接口。
+推荐使用 Linux 服务器 `cron` 部署，详见 [Linux 服务器定时打卡教程](docs/server-cron.md)。
 
-详细配置步骤见 [GitHub Actions 每日定时打卡教程](docs/github-actions.md)。
+默认维护的服务器节奏是北京时间 `19:05、19:35、20:05、20:35、21:05、21:35、22:05、22:35`。真正签到成功或系统判断已签到后，会写入当天成功标记，后续任务自动跳过；如果只是“无任务”，会继续等待下一轮。
 
-如果有自己的 Linux 服务器，优先推荐 [Linux 服务器定时打卡教程](docs/server-cron.md)，比 GitHub Actions 的 schedule 更准。
+GitHub Actions 方案已归档，不再维护。想自行尝试可以参考 [归档教程](docs/archive/github-actions.md) 和 [归档 workflow](docs/archive/daily-checkin.yml)，需要自己复制回 `.github/workflows/`。
 
 ## 打包
 

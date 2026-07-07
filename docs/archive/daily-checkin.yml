@@ -1,5 +1,8 @@
 name: Daily 652 Check-in
 
+# Archived example only. This workflow is intentionally stored outside
+# .github/workflows, so GitHub will not run it automatically.
+
 on:
   workflow_dispatch:
     inputs:

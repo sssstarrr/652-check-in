@@ -1,4 +1,6 @@
-# GitHub Actions 每日定时打卡教程
+# GitHub Actions 每日定时打卡教程（归档，不维护）
+
+> 这份文档只保留给想自己尝试 GitHub Actions 的人参考。GitHub schedule 可能延迟或漏触发，本项目后续不再维护这个方案。推荐使用 [Linux 服务器定时打卡教程](../server-cron.md)。
 
 > 只在你确认符合学校打卡规则、且允许使用自动化的前提下使用。不要把 Cookie、Session、密码发给任何人，也不要写进代码。
 
