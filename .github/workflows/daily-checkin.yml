@@ -1,4 +1,5 @@
 name: Daily 652 Check-in
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true && 'Dry-run 652 Check-in' || 'Daily 652 Check-in' }}
 
 on:
   workflow_dispatch:
@@ -9,12 +10,14 @@ on:
         default: false
         type: boolean
   schedule:
-    # GitHub cron uses UTC. These retries cover 19:31-20:31 Asia/Shanghai.
-    - cron: "31,41,51 11 * * *"
-    - cron: "1,11,21,31 12 * * *"
+    # GitHub cron uses UTC. Try every 5 minutes from 19:30 to 23:55 Asia/Shanghai.
+    # GitHub scheduled runs can be delayed; repeated runs are safe because the app detects already checked-in tasks.
+    - cron: "30,35,40,45,50,55 11 * * *"
+    - cron: "*/5 12-15 * * *"
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: daily-652-checkin
@@ -26,18 +29,96 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: Compute Beijing date
+        id: clock
+        shell: bash
+        run: echo "date=$(TZ=Asia/Shanghai date +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore success marker
+        id: success-marker
+        uses: actions/cache/restore@v4
+        with:
+          path: .checkin-success
+          key: 652-checkin-success-${{ steps.clock.outputs.date }}
+
+      - name: Check previous successful run
+        id: previous-success
+        if: github.event_name == 'schedule' && steps.success-marker.outputs.cache-hit != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: daily-checkin.yml
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          import sys
+          import urllib.request
+          import json
+          from datetime import datetime, time, timedelta, timezone
+          from zoneinfo import ZoneInfo
+
+          repo = os.environ.get("GITHUB_REPOSITORY", "")
+          workflow_file = os.environ.get("WORKFLOW_FILE", "daily-checkin.yml")
+          token = os.environ.get("GITHUB_TOKEN", "")
+          current_run_id = str(os.environ.get("GITHUB_RUN_ID", ""))
+          tz = ZoneInfo("Asia/Shanghai")
+          today = datetime.now(tz).date()
+          start = datetime.combine(today, time.min, tz).astimezone(timezone.utc)
+          end = start + timedelta(days=1)
+
+          found = False
+          try:
+              url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow_file}/runs?per_page=50"
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {token}",
+                      "User-Agent": "652-check-in-action",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  payload = json.loads(response.read().decode("utf-8"))
+              for run in payload.get("workflow_runs", []):
+                  if str(run.get("id")) == current_run_id:
+                      continue
+                  if run.get("conclusion") != "success":
+                      continue
+                  if "dry-run" in str(run.get("display_title") or "").lower():
+                      continue
+                  created_at = datetime.fromisoformat(str(run.get("created_at")).replace("Z", "+00:00"))
+                  if start <= created_at < end:
+                      found = True
+                      print(f"reason=已有成功运行 {run.get('html_url')}", file=sys.stderr)
+                      break
+          except Exception as exc:
+              print(f"warning=检查历史成功运行失败，将继续执行打卡：{exc}", file=sys.stderr)
+
+          print(f"found={'true' if found else 'false'}")
+          PY
+
+      - name: Skip because already succeeded today
+        if: github.event_name == 'schedule' && (steps.success-marker.outputs.cache-hit == 'true' || steps.previous-success.outputs.found == 'true')
+        shell: bash
+        run: echo "北京时间 ${{ steps.clock.outputs.date }} 已有成功打卡，本次定时任务跳过。"
+
       - name: Checkout
+        if: github.event_name != 'schedule' || (steps.success-marker.outputs.cache-hit != 'true' && steps.previous-success.outputs.found != 'true')
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: github.event_name != 'schedule' || (steps.success-marker.outputs.cache-hit != 'true' && steps.previous-success.outputs.found != 'true')
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
       - name: Install dependencies
+        if: github.event_name != 'schedule' || (steps.success-marker.outputs.cache-hit != 'true' && steps.previous-success.outputs.found != 'true')
         run: python -m pip install -r requirements-action.txt
 
       - name: Run check-in
+        id: run-checkin
+        if: github.event_name != 'schedule' || (steps.success-marker.outputs.cache-hit != 'true' && steps.previous-success.outputs.found != 'true')
         env:
           QFHY_SESSION: ${{ secrets.QFHY_SESSION }}
           CHECKIN_ACCOUNTS_JSON: ${{ secrets.CHECKIN_ACCOUNTS_JSON }}
@@ -56,3 +137,22 @@ jobs:
             EXTRA_ARGS+=(--dry-run)
           fi
           python -m app.cli.checkin_once "${EXTRA_ARGS[@]}"
+
+      - name: Write success marker
+        if: steps.success-marker.outputs.cache-hit != 'true' && (steps.previous-success.outputs.found == 'true' || steps.run-checkin.outcome == 'success') && (github.event_name != 'workflow_dispatch' || inputs.dry_run != true)
+        shell: bash
+        run: |
+          mkdir -p .checkin-success
+          {
+            echo "date=${{ steps.clock.outputs.date }}"
+            echo "run_id=${{ github.run_id }}"
+            echo "event=${{ github.event_name }}"
+          } > ".checkin-success/${{ steps.clock.outputs.date }}.txt"
+
+      - name: Save success marker
+        if: steps.success-marker.outputs.cache-hit != 'true' && (steps.previous-success.outputs.found == 'true' || steps.run-checkin.outcome == 'success') && (github.event_name != 'workflow_dispatch' || inputs.dry_run != true)
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: .checkin-success
+          key: 652-checkin-success-${{ steps.clock.outputs.date }}
