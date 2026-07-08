@@ -248,6 +248,9 @@ class MainWindow(QMainWindow):
         if not result.success:
             self.append_log(result.message)
             return
+        if result.cookies and self.current_account and result.cookies != self.current_account.session_token:
+            self.account_store.update_session(self.current_account, result.cookies)
+            self.append_log("登录态已刷新并保存")
         data = result.data or {}
         self._fill_table(self.pending_table, data.get("pending") or [])
         self._fill_table(self.completed_table, data.get("completed") or [])

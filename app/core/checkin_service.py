@@ -96,13 +96,26 @@ class CheckinService:
         target = username or (challenge.username if challenge else "")
         if not target:
             return OperationResult(False, "短信验证上下文已失效，请重新登录")
-        response = self.api.send_sms_code(target)
-        if not (200 <= response.status_code < 300):
-            return OperationResult(False, f"短信发送失败 ({response.status_code})")
-        text = response.text
-        if any(flag in text.lower() for flag in ("false", "error")) or "失败" in text:
-            return OperationResult(False, "短信发送失败，请稍后重试")
-        return OperationResult(True, "短信验证码已发送")
+        last_response = None
+        best_error = ""
+        for field_name in ("request_username", "username", "requestUsername"):
+            response = self.api.send_sms_code(target, field_name=field_name)
+            last_response = response
+            if not (200 <= response.status_code < 300):
+                continue
+            if self._sms_send_ok(response.text):
+                return OperationResult(True, "短信验证码已发送")
+            message = self._extract_sms_error(response.text)
+            if message:
+                best_error = message
+            if message and self._looks_like_final_sms_error(message):
+                return OperationResult(False, f"短信发送失败：{message}")
+
+        if last_response is None:
+            return OperationResult(False, "短信发送失败：未收到接口响应")
+        if not (200 <= last_response.status_code < 300):
+            return OperationResult(False, f"短信发送失败 ({last_response.status_code})")
+        return OperationResult(False, f"短信发送失败：{best_error or self._extract_sms_error(last_response.text) or '请稍后重试'}")
 
     def submit_sms_code(self, sms_code: str) -> OperationResult:
         challenge = self.pending_sms_challenge
@@ -197,7 +210,7 @@ class CheckinService:
         return OperationResult(True, "扫码登录成功", data=session, cookies=full_cookies)
 
     def load_tasks(self, cookies: str | None = None) -> OperationResult:
-        effective_cookies = cookies or self.current_cookies or None
+        effective_cookies = self.refresh_login_state(cookies or self.current_cookies or "") or None
         result: dict[str, list[CheckinTask]] = {}
         for status, key in ((1, "pending"), (2, "completed"), (3, "absent")):
             response = self.api.get_task_list(status=status, cookies=effective_cookies)
@@ -205,10 +218,10 @@ class CheckinService:
                 return OperationResult(False, f"获取任务列表失败 ({response.status_code})")
             payload = response.json()
             if payload.get("resultCode") != 0 or not payload.get("success"):
-                return OperationResult(False, payload.get("errorMsg") or "获取任务列表失败")
+                return OperationResult(False, self._api_error_message("获取任务列表失败", payload.get("errorMsg"), effective_cookies or ""))
             tasks = ((payload.get("result") or {}).get("data") or [])
             result[key] = [CheckinTask.from_api(item) for item in tasks]
-        return OperationResult(True, "任务列表获取成功", data=result)
+        return OperationResult(True, "任务列表获取成功", data=result, cookies=effective_cookies or "")
 
     def perform_checkin(self, account: Account, selected_location: CheckinLocation | None = None) -> CheckinResult:
         cookies = account.session_token if account.is_session_valid() else self.current_cookies or cookie_jar_to_string(self.api.session.cookies)
@@ -222,7 +235,9 @@ class CheckinService:
         account: Account,
         selected_location: CheckinLocation | None = None,
     ) -> CheckinResult:
-        effective_cookies = self._refresh_session_from_sop(cookies)
+        effective_cookies = self.refresh_login_state(cookies)
+        if effective_cookies and effective_cookies != cookies:
+            self._update_account_session(account, effective_cookies)
 
         task_response = self.api.get_task_list(status=1, cookies=effective_cookies)
         if task_response.status_code != 200:
@@ -267,11 +282,15 @@ class CheckinService:
             self._api_error_message("签到失败", submit_payload.get("errorMsg"), effective_cookies),
         )
 
+    def refresh_login_state(self, cookies: str) -> str:
+        return self._refresh_session_from_sop(cookies)
+
     def _refresh_session_from_sop(self, cookies: str) -> str:
         if "_sop_session_=" not in cookies:
             return cookies
         try:
             refreshed = self.api.complete_sso_with_sop_session(cookies)
+            self.current_cookies = refreshed or cookies
             return refreshed or cookies
         except Exception as exc:
             self.logger.error(f"SSO SESSION 获取失败: {exc}")
@@ -282,8 +301,8 @@ class CheckinService:
         if "身份信息" not in text:
             return text
         if "_sop_session_=" in cookies:
-            return f"{text}；GitHub Secret 中的登录态已失效，请重新登录桌面版后复制最新完整 session_token"
-        return f"{text}；GitHub Secret 只包含 SESSION 或已过期，请复制 accounts.json 中完整 session_token"
+            return f"{text}；登录态已失效，请重新登录并保存最新账号信息"
+        return f"{text}；当前 SESSION 已过期或不完整，请重新登录"
 
     def parse_sop_session(self, jwt: str) -> dict[str, Any]:
         parts = jwt.split(".")
@@ -340,6 +359,48 @@ class CheckinService:
         lower = html.lower()
         return "smscode" in lower or "doublesubmit" in lower or "sendsms_double" in lower or "短信" in html
 
+    def _sms_send_ok(self, text: str) -> bool:
+        stripped = text.strip()
+        if not stripped:
+            return True
+        lower = stripped.lower()
+        if any(flag in lower for flag in ("false", "error", "fail")) or "失败" in stripped or "错误" in stripped:
+            return False
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            return "成功" in stripped or lower in {"true", "ok", "success"}
+        success = payload.get("success")
+        code = payload.get("code", payload.get("resultCode"))
+        if success is False:
+            return False
+        if str(code) not in {"", "0", "200", "None"} and code is not None:
+            return False
+        message = str(payload.get("msg") or payload.get("message") or payload.get("errorMsg") or "")
+        return "失败" not in message and "错误" not in message
+
+    def _extract_sms_error(self, text: str) -> str:
+        stripped = text.strip()
+        if not stripped:
+            return ""
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            soup = BeautifulSoup(stripped, "html.parser")
+            page_text = soup.get_text(" ", strip=True) if soup else stripped
+            return page_text[:120]
+        for key in ("errorMsg", "msg", "message", "error", "data"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return stripped[:120]
+
+    def _looks_like_final_sms_error(self, message: str) -> bool:
+        lower = message.lower()
+        if any(token in lower for token in ("request_username", "username", "parameter", "param", "参数")):
+            return False
+        return any(token in message for token in ("频繁", "稍后", "手机号", "账户", "账号", "不存在", "禁用", "锁定"))
+
     def _extract_login_error(self, html: str, status_code: int) -> str:
         soup = BeautifulSoup(html, "html.parser")
         error_node = soup.find(class_=re.compile("error", re.I))
@@ -377,7 +438,15 @@ class CheckinService:
 
         account.last_checkin_time = now_string()
         if cookies:
-            account.session_token = cookies
-            account.session_expire_time = future_time_string(30)
+            self._apply_account_session(account, cookies)
         if self.account_store:
             self.account_store.save_account(account)
+
+    def _update_account_session(self, account: Account, cookies: str) -> None:
+        self._apply_account_session(account, cookies)
+        if self.account_store:
+            self.account_store.save_account(account)
+
+    def _apply_account_session(self, account: Account, cookies: str) -> None:
+        account.session_token = cookies
+        account.session_expire_time = future_time_string(30)

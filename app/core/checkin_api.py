@@ -117,7 +117,7 @@ class CheckinApi:
         )
         return self.session.post(LOGIN_PAGE, data=data, headers=headers, timeout=self.timeout, allow_redirects=False)
 
-    def send_sms_code(self, username: str) -> requests.Response:
+    def send_sms_code(self, username: str, field_name: str = "request_username") -> requests.Response:
         headers = {
             "Accept": "*/*",
             "Accept-Language": "zh-CN,zh;q=0.9",
@@ -128,7 +128,7 @@ class CheckinApi:
         }
         return self.session.post(
             SMS_SEND_URL,
-            data={"request_username": username, "type": "1"},
+            data={field_name: username, "type": "1"},
             headers=headers,
             timeout=self.timeout,
         )

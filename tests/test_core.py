@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 from app.core.checkin_service import CheckinService
 from app.core.location import build_checkin_body, default_location
-from app.core.models import Account, CheckinStatus
+from app.core.models import Account, CheckinStatus, SmsChallenge
 from app.core.rsa_encryptor import encrypt_password
 from app.cli.checkin_once import (
     CliConfigError,
@@ -186,6 +186,62 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(result.status, CheckinStatus.NO_TASK)
         self.assertTrue(api.refreshed)
         self.assertEqual(extract_cookie_value(api.cookies_seen, "SESSION"), "fresh")
+        self.assertEqual(extract_cookie_value(account.session_token, "SESSION"), "fresh")
+
+    def test_load_tasks_returns_refreshed_cookies(self) -> None:
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {"success": True, "resultCode": 0, "result": {"data": []}}
+
+        class FakeApi:
+            def __init__(self):
+                self.timeout = 15
+                self.cookies_seen = []
+
+            def complete_sso_with_sop_session(self, cookies: str) -> str:
+                return merge_cookie_strings(cookies, "SESSION=fresh")
+
+            def get_task_list(self, status: int = 1, cookies: str | None = None):
+                self.cookies_seen.append(cookies or "")
+                return Response()
+
+        api = FakeApi()
+        service = CheckinService(api=api)
+        result = service.load_tasks("_sop_session_=sop; SESSION=old")
+        self.assertTrue(result.success)
+        self.assertEqual(extract_cookie_value(result.cookies, "SESSION"), "fresh")
+        self.assertTrue(all(extract_cookie_value(cookies, "SESSION") == "fresh" for cookies in api.cookies_seen))
+
+    def test_sms_send_retries_parameter_names(self) -> None:
+        class Response:
+            status_code = 200
+
+            def __init__(self, text: str):
+                self._text = text
+
+            @property
+            def text(self):
+                return self._text
+
+        class FakeApi:
+            def __init__(self):
+                self.timeout = 15
+                self.fields = []
+
+            def send_sms_code(self, username: str, field_name: str = "request_username"):
+                self.fields.append(field_name)
+                if field_name == "request_username":
+                    return Response('{"success":false,"msg":"参数 request_username 错误"}')
+                return Response('{"success":true,"code":200,"msg":"ok"}')
+
+        api = FakeApi()
+        service = CheckinService(api=api)
+        service.pending_sms_challenge = SmsChallenge(username="1001", execution="e1")
+        result = service.send_sms_code()
+        self.assertTrue(result.success)
+        self.assertEqual(api.fields[:2], ["request_username", "username"])
 
 
 if __name__ == "__main__":
