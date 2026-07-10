@@ -56,6 +56,11 @@ class SettingsDialog(QDialog):
         self.auto_checkin_scope_combo.addItems(["全部账号", "当前账号"])
         form.addRow("自动打卡范围", self.auto_checkin_scope_combo)
 
+        self.auto_checkin_retry_spin = QSpinBox()
+        self.auto_checkin_retry_spin.setRange(1, 60)
+        self.auto_checkin_retry_spin.setSuffix(" 分钟")
+        form.addRow("失败重试间隔", self.auto_checkin_retry_spin)
+
         self.timeout_spin = QSpinBox()
         self.timeout_spin.setRange(5, 60)
         self.timeout_spin.setSuffix(" 秒")
@@ -77,6 +82,7 @@ class SettingsDialog(QDialog):
             "auto_checkin_enabled": self.auto_checkin_checkbox.isChecked(),
             "auto_checkin_time": self.auto_checkin_time_edit.time().toString("HH:mm"),
             "auto_checkin_scope": self.auto_checkin_scope_combo.currentText(),
+            "auto_checkin_retry_minutes": self.auto_checkin_retry_spin.value(),
             "timeout": self.timeout_spin.value(),
         }
 
@@ -95,6 +101,7 @@ class SettingsDialog(QDialog):
         self.auto_checkin_time_edit.setTime(auto_time if auto_time.isValid() else QTime(19, 31))
         scope_idx = self.auto_checkin_scope_combo.findText(self.settings.get("auto_checkin_scope") or "全部账号")
         self.auto_checkin_scope_combo.setCurrentIndex(max(0, scope_idx))
+        self.auto_checkin_retry_spin.setValue(int(self.settings.get("auto_checkin_retry_minutes") or 5))
         self.timeout_spin.setValue(int(self.settings.get("timeout") or 15))
 
     def _refresh_locations(self) -> None:

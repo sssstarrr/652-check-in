@@ -220,11 +220,22 @@ class CheckinService:
             if payload.get("resultCode") != 0 or not payload.get("success"):
                 return OperationResult(False, self._api_error_message("获取任务列表失败", payload.get("errorMsg"), effective_cookies or ""))
             tasks = ((payload.get("result") or {}).get("data") or [])
-            result[key] = [CheckinTask.from_api(item) for item in tasks]
+            parsed_tasks = [CheckinTask.from_api(item) for item in tasks]
+            if status == 2:
+                for task in parsed_tasks:
+                    task.status_text = "已签到"
+            elif status == 3:
+                for task in parsed_tasks:
+                    task.status_text = "缺勤"
+            result[key] = parsed_tasks
+        result["completed"] = self._enrich_completed_checkin_times(
+            result.get("completed") or [],
+            effective_cookies or "",
+        )
         return OperationResult(True, "任务列表获取成功", data=result, cookies=effective_cookies or "")
 
     def perform_checkin(self, account: Account, selected_location: CheckinLocation | None = None) -> CheckinResult:
-        cookies = account.session_token if account.is_session_valid() else self.current_cookies or cookie_jar_to_string(self.api.session.cookies)
+        cookies = account.session_token or self.current_cookies or cookie_jar_to_string(self.api.session.cookies)
         if not cookies:
             return CheckinResult(CheckinStatus.FAILED, "未找到可用 Session，请重新登录")
         return self.perform_checkin_with_cookies(cookies, account, selected_location)
@@ -267,6 +278,8 @@ class CheckinService:
 
         dkxx = (((detail_payload.get("result") or {}).get("data") or {}).get("dkxx") or {})
         if int(dkxx.get("qdzt") or 0) == 1:
+            task.checkin_status = 1
+            task.checkin_time = dkxx.get("qdsj") or task.checkin_time
             return self._checkin_already(account, "今日已签到", task)
 
         location = selected_location or default_location(account.selected_location)
@@ -276,6 +289,8 @@ class CheckinService:
             return self._checkin_failed(account, f"签到提交失败 ({submit_response.status_code})")
         submit_payload = submit_response.json()
         if submit_payload.get("success") and submit_payload.get("resultCode") == 0:
+            task.checkin_status = 1
+            task.checkin_time = str(body.get("qdsj") or "") or None
             return self._checkin_success(account, "签到成功", task, location, effective_cookies)
         return self._checkin_failed(
             account,
@@ -284,6 +299,26 @@ class CheckinService:
 
     def refresh_login_state(self, cookies: str) -> str:
         return self._refresh_session_from_sop(cookies)
+
+    def _enrich_completed_checkin_times(self, tasks: list[CheckinTask], cookies: str) -> list[CheckinTask]:
+        for task in tasks:
+            if task.checkin_time:
+                continue
+            try:
+                response = self.api.get_task_detail(task.id, cookies=cookies)
+                if response.status_code != 200:
+                    continue
+                payload = response.json()
+                if payload.get("resultCode") != 0 or not payload.get("success"):
+                    continue
+                dkxx = (((payload.get("result") or {}).get("data") or {}).get("dkxx") or {})
+                checkin_time = dkxx.get("qdsj")
+                if checkin_time:
+                    task.checkin_time = str(checkin_time)
+                    task.checkin_status = int(dkxx.get("qdzt") or 0)
+            except Exception as exc:
+                self.logger.error(f"获取任务 {task.id} 签到时间失败: {exc}")
+        return tasks
 
     def _refresh_session_from_sop(self, cookies: str) -> str:
         if "_sop_session_=" not in cookies:
@@ -417,11 +452,11 @@ class CheckinService:
         return f"登录失败 ({status_code})"
 
     def _checkin_success(self, account: Account, message: str, task: CheckinTask, location: CheckinLocation, cookies: str) -> CheckinResult:
-        self._update_account(account, "成功", cookies)
+        self._update_account(account, "成功", cookies, task.checkin_time)
         return CheckinResult(CheckinStatus.SUCCESS, message, task=task, location=location)
 
     def _checkin_already(self, account: Account, message: str, task: CheckinTask) -> CheckinResult:
-        self._update_account(account, "已签到")
+        self._update_account(account, "已签到", checkin_time=task.checkin_time)
         return CheckinResult(CheckinStatus.ALREADY_CHECKED, message, task=task)
 
     def _checkin_no_task(self, account: Account, message: str) -> CheckinResult:
@@ -432,11 +467,16 @@ class CheckinService:
         self._update_account(account, f"失败: {message}")
         return CheckinResult(CheckinStatus.FAILED, message)
 
-    def _update_account(self, account: Account, status: str, cookies: str | None = None) -> None:
+    def _update_account(
+        self,
+        account: Account,
+        status: str,
+        cookies: str | None = None,
+        checkin_time: str | None = None,
+    ) -> None:
         account.last_checkin_status = status
-        from app.utils.time_utils import now_string
-
-        account.last_checkin_time = now_string()
+        if checkin_time:
+            account.last_checkin_time = checkin_time
         if cookies:
             self._apply_account_session(account, cookies)
         if self.account_store:

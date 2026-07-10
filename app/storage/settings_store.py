@@ -16,7 +16,12 @@ DEFAULT_SETTINGS = {
     "auto_checkin_enabled": False,
     "auto_checkin_time": "19:31",
     "auto_checkin_scope": "全部账号",
+    "auto_checkin_retry_minutes": 5,
     "last_auto_checkin_date": "",
+    "last_auto_checkin_attempt": "",
+    "last_auto_checkin_result": "",
+    "last_auto_checkin_success_time": "",
+    "auto_checkin_success_dates": {},
 }
 
 

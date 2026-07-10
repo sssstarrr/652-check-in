@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 
@@ -30,6 +31,7 @@ from app.cli.checkin_once import (
 from app.utils import time_utils
 from app.utils.cookie_utils import extract_cookie_value, merge_cookie_strings
 from app.utils.logger import redact_message
+from app.ui.main_window import MainWindow
 
 
 def _jwt(payload: dict) -> str:
@@ -213,6 +215,99 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(extract_cookie_value(result.cookies, "SESSION"), "fresh")
         self.assertTrue(all(extract_cookie_value(cookies, "SESSION") == "fresh" for cookies in api.cookies_seen))
+
+    def test_load_tasks_enriches_completed_checkin_time(self) -> None:
+        class Response:
+            status_code = 200
+
+            def __init__(self, payload):
+                self.payload = payload
+
+            def json(self):
+                return self.payload
+
+        class FakeApi:
+            def __init__(self):
+                self.timeout = 15
+                self.detail_ids = []
+
+            def complete_sso_with_sop_session(self, cookies: str) -> str:
+                return cookies
+
+            def get_task_list(self, status: int = 1, cookies: str | None = None):
+                tasks = [{"id": 42, "rwmc": "测试任务", "rwzt": "进行中"}] if status == 2 else []
+                return Response({"success": True, "resultCode": 0, "result": {"data": tasks}})
+
+            def get_task_detail(self, task_id: int, cookies: str | None = None):
+                self.detail_ids.append(task_id)
+                return Response(
+                    {
+                        "success": True,
+                        "resultCode": 0,
+                        "result": {"data": {"dkxx": {"qdzt": 1, "qdsj": "2026-07-10 20:41:08"}}},
+                    }
+                )
+
+        api = FakeApi()
+        result = CheckinService(api=api).load_tasks("SESSION=test")
+        self.assertTrue(result.success)
+        self.assertEqual(api.detail_ids, [42])
+        task = result.data["completed"][0]
+        self.assertEqual(task.status_text, "已签到")
+        self.assertEqual(task.checkin_time, "2026-07-10 20:41:08")
+        self.assertEqual(task.checkin_status, 1)
+
+    def test_successful_checkin_records_submitted_time(self) -> None:
+        class Response:
+            status_code = 200
+
+            def __init__(self, payload):
+                self.payload = payload
+
+            def json(self):
+                return self.payload
+
+        class FakeApi:
+            def __init__(self):
+                self.timeout = 15
+                self.submitted = None
+
+            def complete_sso_with_sop_session(self, cookies: str) -> str:
+                return cookies
+
+            def get_task_list(self, status: int = 1, cookies: str | None = None):
+                return Response(
+                    {
+                        "success": True,
+                        "resultCode": 0,
+                        "result": {"data": [{"id": 7, "rwmc": "测试任务", "rwzt": "进行中"}]},
+                    }
+                )
+
+            def get_task_detail(self, task_id: int, cookies: str | None = None):
+                return Response({"success": True, "resultCode": 0, "result": {"data": {"dkxx": {"qdzt": 0}}}})
+
+            def submit_location_checkin(self, request_body, cookies: str | None = None):
+                self.submitted = request_body
+                return Response({"success": True, "resultCode": 0, "result": {"data": True}})
+
+        api = FakeApi()
+        account = Account(id="1", student_id="1001", session_token="SESSION=test")
+        result = CheckinService(api=api).perform_checkin_with_cookies(
+            account.session_token,
+            account,
+            default_location("宜宾"),
+        )
+        self.assertEqual(result.status, CheckinStatus.SUCCESS)
+        self.assertEqual(result.task.checkin_time, api.submitted["qdsj"])
+        self.assertEqual(account.last_checkin_time, api.submitted["qdsj"])
+
+    def test_desktop_scheduler_retry_window(self) -> None:
+        now = datetime(2026, 7, 10, 20, 44, 59)
+        self.assertTrue(MainWindow._auto_retry_due("", now, 5))
+        self.assertFalse(MainWindow._auto_retry_due("2026-07-10 20:40:00", now, 5))
+        self.assertTrue(MainWindow._auto_retry_due("2026-07-10 20:39:59", now, 5))
+        self.assertTrue(MainWindow._auto_retry_due("2026-07-09 23:59:59", now, 5))
 
     def test_sms_send_retries_parameter_names(self) -> None:
         class Response:
