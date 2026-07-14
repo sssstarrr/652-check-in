@@ -37,6 +37,12 @@ def extract_cookie_value(cookie_string: str | None, name: str) -> str | None:
     return parse_cookie_pairs(cookie_string).get(name)
 
 
+def remove_cookie(cookie_string: str | None, name: str) -> str:
+    pairs = parse_cookie_pairs(cookie_string)
+    pairs.pop(name, None)
+    return "; ".join(f"{key}={value}" for key, value in pairs.items())
+
+
 def set_cookie_headers_to_string(headers: Iterable[str] | None) -> str:
     if not headers:
         return ""

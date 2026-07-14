@@ -8,11 +8,14 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
+import requests
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from app.core.checkin_service import CheckinService
+from app.core.checkin_api import CheckinApi
 from app.core.location import build_checkin_body, default_location
 from app.core.models import Account, CheckinStatus, SmsChallenge
 from app.core.rsa_encryptor import encrypt_password
@@ -29,7 +32,7 @@ from app.cli.checkin_once import (
     parse_args,
 )
 from app.utils import time_utils
-from app.utils.cookie_utils import extract_cookie_value, merge_cookie_strings
+from app.utils.cookie_utils import extract_cookie_value, merge_cookie_strings, remove_cookie
 from app.utils.logger import redact_message
 from app.ui.main_window import MainWindow
 
@@ -76,6 +79,8 @@ class CoreTests(unittest.TestCase):
     def test_cookie_helpers_and_redaction(self) -> None:
         merged = merge_cookie_strings("SESSION=abc", "_sop_session_=secret.jwt.value")
         self.assertEqual(extract_cookie_value(merged, "SESSION"), "abc")
+        self.assertIsNone(extract_cookie_value(remove_cookie(merged, "SESSION"), "SESSION"))
+        self.assertEqual(extract_cookie_value(remove_cookie(merged, "SESSION"), "_sop_session_"), "secret.jwt.value")
         redacted = redact_message(f"Cookie: {merged}")
         self.assertNotIn("secret.jwt.value", redacted)
         self.assertIn("_sop_session_=是", cookie_diagnostics(merged))
@@ -189,6 +194,32 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(api.refreshed)
         self.assertEqual(extract_cookie_value(api.cookies_seen, "SESSION"), "fresh")
         self.assertEqual(extract_cookie_value(account.session_token, "SESSION"), "fresh")
+
+    def test_real_api_refresh_discards_stale_in_memory_session(self) -> None:
+        token = _jwt(
+            {
+                "uid": "1001",
+                "ticket": "ticket-value",
+                "extra": json.dumps({"openId": "openid-value"}),
+            }
+        )
+        session = requests.Session()
+        session.cookies.set("SESSION", "stale", domain="qfhy.suse.edu.cn", path="/")
+        api = CheckinApi(session=session)
+        calls = []
+
+        def issue_fresh_session(cookies: str, open_id: str) -> str:
+            calls.append((cookies, open_id, api._find_session_cookie()))
+            session.cookies.set("SESSION", "fresh", domain="qfhy.suse.edu.cn", path="/")
+            return "fresh"
+
+        api._try_access_xg_page = issue_fresh_session
+        refreshed = api.complete_sso_with_sop_session(f"_sop_session_={token}; SESSION=stale")
+
+        self.assertEqual(len(calls), 1)
+        self.assertIsNone(extract_cookie_value(calls[0][0], "SESSION"))
+        self.assertIsNone(calls[0][2])
+        self.assertEqual(extract_cookie_value(refreshed, "SESSION"), "fresh")
 
     def test_load_tasks_returns_refreshed_cookies(self) -> None:
         class Response:

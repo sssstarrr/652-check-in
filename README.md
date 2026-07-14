@@ -1,6 +1,10 @@
-# 652 打卡桌面版
+# 652 打卡
 
-独立的 Python + PyQt5 桌面工具，只实现 SUSE OAA 中的 652 打卡能力：密码登录、短信二次验证、微信扫码登录、任务刷新、位置签到、账号与 Session 管理。
+面向 Windows 和 Android 的 652 打卡客户端，只实现 SUSE OAA 中与 652 签到有关的能力。
+
+- Windows 桌面版位于仓库根目录，使用 Python + PyQt5。
+- Android 原生版位于 [`android/`](android/)，使用 Java 与 Android Framework API。
+- 可安装的 Windows ZIP 和 Android APK 请从 [GitHub Releases](https://github.com/sssstarrr/652-check-in/releases) 下载。
 
 ## 获取源码
 
@@ -9,7 +13,7 @@ gh repo clone sssstarrr/652-check-in
 cd 652-check-in
 ```
 
-## 运行
+## Windows 桌面版运行
 
 ```powershell
 python -m pip install -r requirements.txt
@@ -23,7 +27,7 @@ $env:SUSE_WECHAT_APP_ID="你的微信 App ID"
 python main.py
 ```
 
-## 功能
+## Windows 桌面版功能
 
 - 密码登录：获取 UIAS 登录页、解析 `execution`、显示验证码、RSA 加密反转后的密码、提交登录并跟随 SSO 重定向。
 - 短信二次验证：登录页触发短信验证时，支持发送短信验证码并继续提交。
@@ -32,6 +36,7 @@ python main.py
 - 多账号管理：支持添加账号、账号下拉切换、账号管理表格、删除账号、修改账号校区、单账号打卡和全部账号批量打卡。
 - 定时自动打卡：可在设置中启用每日固定时间自动打卡，支持“全部账号”或“当前账号”；失败或暂无任务时按设置间隔重试，账号成功后当天不再重复提交。
 - 账号存储：JSON 保存账号元数据，密码默认不保存；勾选记住密码后优先使用系统 keyring，失败时降级为本地 AES-GCM 加密文件。
+- 后台登录续期：程序长时间缩小到托盘后，刷新任务或自动打卡会丢弃内存中的旧 `SESSION`，通过 `_sop_session_` 换取并保存新会话，无需重启 EXE。
 - 安全日志：密码、Cookie、Session、Token、Ticket 只输出截断后的调试信息。
 
 ## 多账号使用
@@ -68,11 +73,16 @@ scripts\build_windows.bat
 
 输出目录位于 `dist/652-Checkin-Desktop`。
 
+## Android 版
+
+Android 版支持学校官方 WebView 密码/验证码登录、微信扫码、加密会话保存、任务与历史、一键签到和后台定时签到。构建及安全说明见 [`android/README.md`](android/README.md)。
+
 ## 常见问题
 
 - 无法获取验证码：检查校园网/外网是否能访问 `https://uias.suse.edu.cn`。
 - 登录后没有 SESSION：通常是 UIAS 到 qfhy 的 SSO 重定向失败，可重新登录或改用扫码登录。
 - 扫码后无法打卡：确认 `_sop_session_` 尚未过期，必要时重新扫码。
+- 缩小到托盘一段时间后提示登录过期：请使用包含后台续期修复的最新版本；只有 `_sop_session_` 本身也过期时才需要重新登录。
 - keyring 不可用：程序会自动降级到本地加密文件，仍不保存明文密码。
 
 ## 开发验证
@@ -81,4 +91,11 @@ scripts\build_windows.bat
 cd 652-check-in
 python -m unittest discover -s tests
 python -m compileall app
+```
+
+Android 验证：
+
+```powershell
+cd android
+.\gradlew.bat testDebugUnitTest lintRelease assembleDebug
 ```

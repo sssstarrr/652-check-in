@@ -14,6 +14,7 @@ from app.utils.cookie_utils import (
     cookie_jar_to_string,
     extract_cookie_value,
     merge_cookie_strings,
+    remove_cookie,
     response_set_cookie_headers,
     set_cookie_headers_to_string,
 )
@@ -273,6 +274,15 @@ class CheckinApi:
         if not sop_value:
             raise RuntimeError("未找到 _sop_session_ Cookie")
 
+        # A long-running desktop process can retain an expired qfhy SESSION in
+        # requests' in-memory cookie jar.  Treating any non-empty value as a
+        # successful refresh makes restart appear to fix the login, because a
+        # fresh process starts with an empty jar.  A renewal must ignore both
+        # persisted and in-memory SESSION values and accept only one issued by
+        # the SSO flow below.
+        renewal_cookies = remove_cookie(sop_session_cookie, "SESSION")
+        self._clear_session_cookies()
+
         payload = self._decode_sop_payload(sop_value)
         extra = payload.get("extra") or "{}"
         if isinstance(extra, str):
@@ -285,20 +295,20 @@ class CheckinApi:
 
         open_id = extra_payload.get("openId") or extra_payload.get("open_id")
         ticket = payload.get("ticket")
-        session_value = self._find_session_cookie()
+        session_value = None
 
         if not session_value and open_id:
-            session_value = self._try_access_xg_page(sop_session_cookie, open_id)
+            session_value = self._try_access_xg_page(renewal_cookies, open_id)
         if not session_value and ticket:
-            session_value = self._try_ticket_sso(sop_session_cookie, ticket)
+            session_value = self._try_ticket_sso(renewal_cookies, ticket)
         if not session_value and open_id:
-            session_value = self._try_init_site_session(sop_session_cookie, open_id)
+            session_value = self._try_init_site_session(renewal_cookies, open_id)
         if not session_value:
             session_value = self._find_session_cookie()
         if not session_value:
             raise RuntimeError("所有方法都未能获取 SESSION Cookie")
 
-        return merge_cookie_strings(sop_session_cookie, cookie_jar_to_string(self.session.cookies), f"SESSION={session_value}")
+        return merge_cookie_strings(renewal_cookies, cookie_jar_to_string(self.session.cookies), f"SESSION={session_value}")
 
     def get_task_list(self, status: int = 1, cookies: str | None = None) -> requests.Response:
         headers = self._qddk_headers(cookies)
@@ -383,6 +393,18 @@ class CheckinApi:
             if cookie.name == "SESSION" and cookie.value:
                 return cookie.value
         return None
+
+    def _clear_session_cookies(self) -> None:
+        for cookie in list(self.session.cookies):
+            if cookie.name != "SESSION":
+                continue
+            try:
+                self.session.cookies.clear(cookie.domain, cookie.path, cookie.name)
+            except (KeyError, ValueError):
+                # Custom CookieJar implementations used by callers may not
+                # support domain/path clearing. Expiring the value still keeps
+                # it from being accepted by _find_session_cookie().
+                cookie.value = ""
 
     def _html_headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         headers = {

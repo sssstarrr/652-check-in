@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand_blue">#165DFF</color>
+    <color name="brand_blue_dark">#0F4FD6</color>
+    <color name="brand_blue_soft">#EAF0FF</color>
+    <color name="screen_background">#F4F6FA</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="text_primary">#172033</color>
+    <color name="text_secondary">#667085</color>
+    <color name="divider">#E4E8F0</color>
+    <color name="error">#C4320A</color>
+</resources>
