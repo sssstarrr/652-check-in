@@ -14,7 +14,7 @@
 
 ## 安装
 
-1. 从项目的 [GitHub Releases](https://github.com/sssstarrr/652-check-in/releases) 下载 `652-Checkin-Android-v1.0.0.apk`，或按照下方步骤自行构建。
+1. 从项目的 [GitHub Releases](https://github.com/sssstarrr/652-check-in/releases) 下载 `652-Checkin-Android-v1.0.1.apk`，或按照下方步骤自行构建。
 2. 允许文件管理器安装未知来源应用，完成安装。
 3. 在 App 内选择统一身份认证或微信扫码。
 

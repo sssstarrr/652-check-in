@@ -95,7 +95,7 @@ try {
 
 $sourceApk = Join-Path $projectRoot "app\build\outputs\apk\release\app-release.apk"
 $distDirectory = Join-Path $projectRoot "dist"
-$distApk = Join-Path $distDirectory "652-Checkin-Android-v1.0.0.apk"
+$distApk = Join-Path $distDirectory "652-Checkin-Android-v1.0.1.apk"
 New-Item -ItemType Directory -Force -Path $distDirectory | Out-Null
 Copy-Item -Force -LiteralPath $sourceApk -Destination $distApk
 
