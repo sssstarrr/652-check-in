@@ -68,10 +68,6 @@ class CheckinApi:
         self.session = session or requests.Session()
         self.session.headers.update(
             {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36"
-                ),
                 "Accept-Language": "zh-CN,zh;q=0.9",
             }
         )

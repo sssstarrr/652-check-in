@@ -68,6 +68,35 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(service.extract_openid_from_sop_session(token), "openid-value")
         self.assertEqual(service.extract_user_info_from_sop_session(token), ("23341010304", "测试用户"))
 
+    def test_start_qr_login_clears_previous_session(self) -> None:
+        class Response:
+            status_code = 200
+
+            def __init__(self, payload):
+                self.payload = payload
+
+            def json(self):
+                return self.payload
+
+        class FakeApi:
+            def __init__(self):
+                self.session = requests.Session()
+                self.session.cookies.set("SESSION", "previous-account", domain="qfhy.suse.edu.cn", path="/")
+
+            def get_wechat_client_id(self):
+                return Response({"data": {"client_id": "client"}})
+
+            def get_wechat_qrcode_url(self, app_id, client_id):
+                return Response({"data": {"img": "base64-image"}})
+
+        api = FakeApi()
+        service = CheckinService(api=api)
+        service.current_cookies = "SESSION=previous-account"
+        result = service.start_qr_login()
+        self.assertTrue(result.success)
+        self.assertEqual(list(api.session.cookies), [])
+        self.assertEqual(service.current_cookies, "")
+
     def test_location_body_shape(self) -> None:
         location = default_location("宜宾")
         body = build_checkin_body(1001, location)
@@ -332,6 +361,94 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(result.status, CheckinStatus.SUCCESS)
         self.assertEqual(result.task.checkin_time, api.submitted["qdsj"])
         self.assertEqual(account.last_checkin_time, api.submitted["qdsj"])
+
+    def test_checkin_fallback_uses_newest_task(self) -> None:
+        class Response:
+            status_code = 200
+
+            def __init__(self, payload):
+                self.payload = payload
+
+            def json(self):
+                return self.payload
+
+        class FakeApi:
+            def __init__(self):
+                self.detail_ids = []
+                self.submitted = None
+
+            def complete_sso_with_sop_session(self, cookies: str) -> str:
+                return cookies
+
+            def get_task_list(self, status: int = 1, cookies: str | None = None):
+                return Response({
+                    "success": True,
+                    "resultCode": 0,
+                    "result": {"data": [
+                        {"id": 1, "rwmc": "旧任务", "rwzt": "进行中", "needTime": "2026-07-01"},
+                        {"id": 2, "rwmc": "新任务", "rwzt": "进行中", "needTime": "2026-07-09"},
+                    ]},
+                })
+
+            def get_task_detail(self, task_id: int, cookies: str | None = None):
+                self.detail_ids.append(task_id)
+                return Response({"success": True, "resultCode": 0, "result": {"data": {"dkxx": {"qdzt": 1}}}})
+
+            def submit_location_checkin(self, request_body, cookies: str | None = None):
+                self.submitted = request_body
+                return Response({"success": True, "resultCode": 0})
+
+        api = FakeApi()
+        account = Account(id="1", student_id="1001", session_token="SESSION=test")
+        result = CheckinService(api=api).perform_checkin_with_cookies(
+            account.session_token,
+            account,
+            default_location("宜宾"),
+        )
+        self.assertEqual(result.status, CheckinStatus.ALREADY_CHECKED)
+        self.assertEqual(api.detail_ids, [2])
+
+    def test_checkin_does_not_submit_when_detail_has_no_checkin_record(self) -> None:
+        class Response:
+            status_code = 200
+
+            def __init__(self, payload):
+                self.payload = payload
+
+            def json(self):
+                return self.payload
+
+        class FakeApi:
+            def __init__(self):
+                self.submitted = False
+
+            def complete_sso_with_sop_session(self, cookies: str) -> str:
+                return cookies
+
+            def get_task_list(self, status: int = 1, cookies: str | None = None):
+                return Response({
+                    "success": True,
+                    "resultCode": 0,
+                    "result": {"data": [{"id": 7, "rwmc": "测试任务", "rwzt": "进行中"}]},
+                })
+
+            def get_task_detail(self, task_id: int, cookies: str | None = None):
+                return Response({"success": True, "resultCode": 0, "result": {"data": {}}})
+
+            def submit_location_checkin(self, request_body, cookies: str | None = None):
+                self.submitted = True
+                return Response({"success": True, "resultCode": 0})
+
+        api = FakeApi()
+        account = Account(id="1", student_id="1001", session_token="SESSION=test")
+        result = CheckinService(api=api).perform_checkin_with_cookies(
+            account.session_token,
+            account,
+            default_location("宜宾"),
+        )
+        self.assertEqual(result.status, CheckinStatus.FAILED)
+        self.assertEqual(result.message, "任务详情数据为空")
+        self.assertFalse(api.submitted)
 
     def test_desktop_scheduler_retry_window(self) -> None:
         now = datetime(2026, 7, 10, 20, 44, 59)

@@ -157,7 +157,10 @@ public final class CheckinClient {
 
     public Operation<TaskBundle> loadTasks(String cookies) {
         Operation<String> renewal = refreshSession(cookies);
-        String effectiveCookies = renewal.success ? renewal.data : cookies;
+        if (!renewal.success) {
+            return Operation.failure(renewal.message, renewal.cookies, renewal.authExpired);
+        }
+        String effectiveCookies = renewal.data;
         try {
             List<CheckinTask> pending = fetchTasks(1, effectiveCookies);
             List<CheckinTask> completed = fetchTasks(2, effectiveCookies);
@@ -185,7 +188,10 @@ public final class CheckinClient {
 
     public Operation<CheckinTask> performCheckin(String cookies, LocationPreset location) {
         Operation<String> renewal = refreshSession(cookies);
-        String effectiveCookies = renewal.success ? renewal.data : cookies;
+        if (!renewal.success) {
+            return Operation.failure(renewal.message, renewal.cookies, renewal.authExpired);
+        }
+        String effectiveCookies = renewal.data;
         try {
             List<CheckinTask> pending = fetchTasks(1, effectiveCookies);
             if (pending.isEmpty()) {
@@ -193,6 +199,17 @@ public final class CheckinClient {
             }
 
             String today = formatDate("yyyy-MM-dd");
+            pending.sort((left, right) -> {
+                String leftDate = left.needTime == null ? "" : left.needTime;
+                String rightDate = right.needTime == null ? "" : right.needTime;
+                int dateOrder = rightDate.compareTo(leftDate);
+                if (dateOrder != 0) {
+                    return dateOrder;
+                }
+                String leftStart = left.startTime == null ? "" : left.startTime;
+                String rightStart = right.startTime == null ? "" : right.startTime;
+                return rightStart.compareTo(leftStart);
+            });
             CheckinTask selected = pending.get(0);
             for (CheckinTask task : pending) {
                 if (today.equals(task.needTime) && "进行中".equals(task.statusText)) {
@@ -203,7 +220,10 @@ public final class CheckinClient {
 
             JSONObject detail = fetchDetail(selected.id, effectiveCookies);
             JSONObject dkxx = detail.optJSONObject("dkxx");
-            if (dkxx != null && dkxx.optInt("qdzt", 0) == 1) {
+            if (dkxx == null) {
+                throw new ApiException("任务详情数据为空", false);
+            }
+            if (dkxx.optInt("qdzt", 0) == 1) {
                 selected.checkinStatus = 1;
                 selected.checkinTime = dkxx.optString("qdsj", selected.checkinTime);
                 return Operation.success("今日已签到", selected, effectiveCookies);
@@ -314,7 +334,6 @@ public final class CheckinClient {
         connection.setReadTimeout(TIMEOUT_MS);
         connection.setRequestMethod(method);
         connection.setInstanceFollowRedirects(false);
-        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/125 Mobile Safari/537.36");
         connection.setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9");
         connection.setRequestProperty("Accept", apiHeaders ? "application/json, text/plain, */*" : "text/html,application/xhtml+xml,*/*;q=0.8");
         connection.setRequestProperty("Referer", apiHeaders ? QDDK_ENTRY : QFHY_BASE + "/edu/");
@@ -365,7 +384,8 @@ public final class CheckinClient {
 
     private static JSONObject parsePayload(HttpResult response) throws ApiException {
         if (response.statusCode != 200) {
-            throw new ApiException("服务器请求失败 (" + response.statusCode + ")", false);
+            boolean authExpired = response.statusCode == 401 || response.statusCode == 403;
+            throw new ApiException("服务器请求失败 (" + response.statusCode + ")", authExpired);
         }
         try {
             return new JSONObject(response.body);

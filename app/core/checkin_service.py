@@ -149,6 +149,11 @@ class CheckinService:
         return OperationResult(False, "短信验证码错误或已过期")
 
     def start_qr_login(self) -> OperationResult:
+        # Each QR login must begin with an isolated browser session.  Keeping
+        # the previous account's qfhy cookies can make the callback appear to
+        # belong to the account that was added immediately before it.
+        self.api.session.cookies.clear()
+        self.current_cookies = ""
         response = self.api.get_wechat_client_id()
         if response.status_code != 200:
             return OperationResult(False, f"获取 ClientId 失败 ({response.status_code})")
@@ -264,6 +269,15 @@ class CheckinService:
         if not tasks:
             return self._checkin_no_task(account, "当前没有待签到的任务")
 
+        # Match the upstream selection rule: when there is no task explicitly
+        # dated today, fall back to the newest task rather than server order.
+        tasks.sort(
+            key=lambda item: (
+                item.need_time or str(item.raw.get("qdksrq") or ""),
+                item.start_time or str(item.raw.get("qdkssj") or ""),
+            ),
+            reverse=True,
+        )
         today = today_string()
         task = next((item for item in tasks if item.need_time == today and item.status_text == "进行中"), tasks[0])
         detail_response = self.api.get_task_detail(task.id, cookies=effective_cookies)
@@ -277,6 +291,8 @@ class CheckinService:
             )
 
         dkxx = (((detail_payload.get("result") or {}).get("data") or {}).get("dkxx") or {})
+        if not isinstance(dkxx, dict) or not dkxx:
+            return self._checkin_failed(account, "任务详情数据为空")
         if int(dkxx.get("qdzt") or 0) == 1:
             task.checkin_status = 1
             task.checkin_time = dkxx.get("qdsj") or task.checkin_time
